@@ -17,12 +17,7 @@
 // Protothreads
 #include "pt_cornell_rp2040_v1_4.h"
 
-// Destination port and IP address
-#define UDP_PORT 1234
-#define BEACON_TARGET "172.20.10.2"
-
-// Maximum length of our message
-#define BEACON_MSG_LEN_MAX 127
+#include "../UDP_cfg.h"
 
 // Protocol control block for UDP receive connection
 static struct udp_pcb *udp_rx_pcb;
@@ -88,8 +83,13 @@ static PT_THREAD (protothread_receive(struct pt *pt))
     // Wait on a semaphore
     PT_SEM_SDK_WAIT(pt, &new_message) ;
 
+
     // Print received message
-    printf("%s\n", received_data);
+    printf("Incoming data:\n");
+    for(int i = 0; i<BEACON_MSG_LEN_MAX; i++) {
+        printf("%02X ",received_data[i]);
+    }
+    printf("\n");
 
   }
 
@@ -158,7 +158,7 @@ int main() {
 //    scanf(" %c",&ui);
 //    printf("RECEIVED STDIN [%c]\n",ui);
 
-    sleep_ms(10000);
+    sleep_ms(4000);
     printf("HEY THERE MOTHERGUCKER!\n");
     // Connect to WiFi
     if (connectWifi(country, WIFI_SSID, WIFI_PASSWORD, auth)) {

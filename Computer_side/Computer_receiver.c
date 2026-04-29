@@ -18,6 +18,8 @@
 #include "pt_cornell_rp2040_v1_4.h"
 
 #include "dhcpserver/dhcpserver.h"
+
+#include "../UDP_cfg.h"
 // Destination port and IP address
 typedef struct TCP_SERVER_T_ {
     struct tcp_pcb *server_pcb;
@@ -25,17 +27,17 @@ typedef struct TCP_SERVER_T_ {
     ip_addr_t gw;
 } TCP_SERVER_T;
 
-#define UDP_PORT 1234
-#define BEACON_TARGET "172.20.10.2"
-
-// Maximum length of our message
-#define BEACON_MSG_LEN_MAX 127
 // --- Globals ---
 static ip_addr_t client_ip;
 static bool client_connected = false;
 volatile bool client_joined;   // signal when a client gets a DHCP lease
 semaphore_t new_message;
+volatile bool data_ready = false;
+volatile uint16_t *data_addr = 0;
 char received_data[BEACON_MSG_LEN_MAX];
+
+volatile uint packets_counter = 0;
+volatile uint dma_counter = 0;
 
 static struct udp_pcb *udp_rx_pcb;
 
@@ -47,8 +49,6 @@ static struct udp_pcb *udp_rx_pcb;
 // Buffer in which to copy received messages
 char received_data[BEACON_MSG_LEN_MAX] ;
 
-// Semaphore for signaling a new received message
-semaphore_t new_message ;
 
 static void udpecho_raw_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p,
                  const ip_addr_t *addr, u16_t port)
@@ -95,6 +95,10 @@ void  udpecho_raw_init(void)
     printf("udp_rx_pcb error");
   }
 }
+
+
+
+
 static PT_THREAD(protothread_stream_send(struct pt *pt))
 {
     PT_BEGIN(pt);
@@ -104,18 +108,33 @@ static PT_THREAD(protothread_stream_send(struct pt *pt))
 
         udp_tx_pcb = udp_new();
 
+        uint8_t test_data[BEACON_MSG_LEN_MAX];
+        for(int i = 0; i<BEACON_MSG_LEN_MAX; i++) {
+            test_data[i] = 2*i;
+        }
+
         int n = 0;
         while (1) {
 
-            sleep_ms(1000);
-            n++;
-            struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, BEACON_MSG_LEN_MAX+1, PBUF_RAM);
-            char *req = (char *)p->payload;
-            memset(req, 0, BEACON_MSG_LEN_MAX+1);
-            snprintf(req, BEACON_MSG_LEN_MAX, "message number %d\n",n );
+            while(!data_ready) tight_loop_contents();
+            data_ready = false;
+            // 256 samples --> 512 bytes --> 4x 127-byte messages (plus some loss...)
+            for(int i = 0; i<((256*2)/BEACON_MSG_LEN_MAX); i++) {
+                struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, BEACON_MSG_LEN_MAX + 1, PBUF_RAM);
+                char *req = (char *) p->payload;
+                memset(req, 0, BEACON_MSG_LEN_MAX + 1);
+                memcpy(req, (char *) data_addr + (i*BEACON_MSG_LEN_MAX), BEACON_MSG_LEN_MAX);
+                udp_sendto(udp_tx_pcb, p, &client_ip, UDP_PORT);
+                pbuf_free(p);
+                packets_counter++;
+            }
+            if(packets_counter%100 == 0) {
+                printf("\tSENT %d PACKETS. "
+                       "DMA %d CYCLES DONE. "
+                       "LOST %d CYCLES.\n",packets_counter,dma_counter,dma_counter*((256*2)/BEACON_MSG_LEN_MAX) - packets_counter);
 
-            udp_sendto(udp_tx_pcb, p, &client_ip, UDP_PORT);
-            pbuf_free(p);
+            }
+
         }
 
     PT_END(pt);
@@ -138,13 +157,48 @@ static PT_THREAD(protothread_stream_receive(struct pt *pt))
     PT_END(pt);
 }
 
+#include "hardware/adc.h"
+#include "hardware/dma.h"
+#include "capstone_adc.h"
+
+volatile capstone_adc_struct_t cas;
+
+
+void dma_handler() {
+    // if the second [1] of the DMAs has triggered an interrupt, we can probably assume (DANGEROUS) that we should look halfway through the buffer.
+
+    int data_offset = (ADC_BUFFER_SIZE / 2) * (int) dma_channel_get_irq0_status(cas.adc_dma_daisy_chain[1]);
+    // this shouldn't produce a branch... I think?
+    int culprit_dma_daisy_chain_index = (data_offset != 0);
+    uint16_t *data = &(cas.adc_dma_buffer[data_offset]);
+    // a little stupid, but set the write address to where we starting getting data from.
+    // TODO: configure the DMAs as wrapping rings so that they don't need to be reset. or use a third, cleanup DMA
+    (cas.adc_dma_daisy_chain_hw[culprit_dma_daisy_chain_index])->write_addr = (uintptr_t)(data);
+// clear the correct interrupt
+    dma_hw->ints0 = 0x1 << cas.adc_dma_daisy_chain[culprit_dma_daisy_chain_index];
+    // debugging toggler
+    sio_hw->gpio_togl = 0x1<<18;
+
+    data_ready = true;
+    data_addr = data;
+
+    dma_counter++;
+}
 
 int main() {
     stdio_init_all();
 
-    sleep_ms(10000);
+    sleep_ms(4000);
     printf("Setting up!\n");
     sem_init(&new_message, 0, 1);
+
+
+    // DATA FLOW SETUP!
+    capstone_adc_init(&cas,dma_handler);
+
+    // SERVER(S)
+
+    printf("Server setup...\n");
 
     TCP_SERVER_T *state = calloc(1, sizeof(TCP_SERVER_T));
     if (!state) {
@@ -177,9 +231,15 @@ int main() {
     while(*dhcp_server.client_joined != true) {
         sleep_ms(1000);
     }
+
     printf("New connection complete. Initializing PT threads...\n");
     pt_add_thread(protothread_stream_send);
     pt_add_thread(protothread_stream_receive);
+
+    printf("Starting ADC data...\n");
+    capstone_adc_start(&cas);
+
+    printf("Starting PT Threads...\n");
     pt_schedule_start;  // replaces the while(!complete) loop
 
     dhcp_server_deinit(&dhcp_server);
