@@ -274,6 +274,53 @@ static void dhcp_server_process(void *arg, struct udp_pcb *upcb, struct pbuf *p,
             printf("DHCPS: client connected: MAC=%02x:%02x:%02x:%02x:%02x:%02x IP=%u.%u.%u.%u\n",
                 dhcp_msg.chaddr[0], dhcp_msg.chaddr[1], dhcp_msg.chaddr[2], dhcp_msg.chaddr[3], dhcp_msg.chaddr[4], dhcp_msg.chaddr[5],
                 dhcp_msg.yiaddr[0], dhcp_msg.yiaddr[1], dhcp_msg.yiaddr[2], dhcp_msg.yiaddr[3]);
+
+            /***********************
+             *  UDP STUFF
+             ***********************/
+
+#define BEACON_MSG_LEN_MAX 127
+
+            printf("Attempting to send packet...\n");
+            sleep_ms(1000);
+
+            static struct udp_pcb* pcb;
+            pcb = udp_new() ;
+            static ip_addr_t addr;
+            char ip_str[64]; // too big.
+            snprintf(ip_str,63,"%u.%u.%u.%u\0",dhcp_msg.yiaddr[0], dhcp_msg.yiaddr[1], dhcp_msg.yiaddr[2], dhcp_msg.yiaddr[3]);
+            ipaddr_aton(ip_str, &addr);
+
+            printf("[IP string] %s\n",ip_str);
+
+            // Allocate a PBUF
+            struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, BEACON_MSG_LEN_MAX+1, PBUF_RAM);
+
+            // Pointer to the payload of the pbuf
+            char *req = (char *)p->payload;
+
+            // Clear the pbuf payload
+            memset(req, 0, BEACON_MSG_LEN_MAX+1);
+
+            // Fill the pbuf payload
+            snprintf(req, BEACON_MSG_LEN_MAX, "%s\n\0",
+                     "Hello computer!");
+
+            printf("[Message to send] %s\n",req);
+
+            // Send the UDP packet
+            err_t er = udp_sendto(pcb, p, &addr, 1234);
+
+            printf("[Err Val] 0x%X\n",er);
+
+            // Free the PBUF
+            pbuf_free(p);
+
+            // Check for errors
+            if (er != ERR_OK) {
+                printf("Failed to send UDP packet! error=%d", er);
+            }
+
             break;
         }
 

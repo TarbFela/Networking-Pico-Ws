@@ -41,7 +41,7 @@ static void udpecho_raw_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p,
   // Check that there's something in the pbuf
   if (p != NULL) {
     // Copy the contents of the payload
-    memcpy(received_data, p->payload, BEACON_MSG_LEN_MAX) ;
+    memcpy(received_data, p->payload, BEACON_MSG_LEN_MAX);
     // Semaphore-signal a thread
     PT_SEM_SDK_SIGNAL(pt, &new_message) ;
     // Reset the payload buffer
@@ -169,7 +169,7 @@ int main() {
     sem_init(&new_message, 0, 1) ;
 
     //============================
-    // UDP recenve ISR routines
+    // UDP receive ISR routines
     udpecho_raw_init();
 
     // Add threads, start scheduler
