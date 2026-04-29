@@ -7,7 +7,7 @@ include(pico_sdk_import.cmake)
 # give the project a name (anything you want)
 project(Computer_receiver C CXX ASM)
 
-set(PICO_BOARD pico_w Computer_receiver)
+set(PICO_BOARD pico_w)
 
 # initialize the sdk
 pico_sdk_init()

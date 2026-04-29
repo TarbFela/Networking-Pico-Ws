@@ -165,7 +165,7 @@ int main() {
 
     TCP_SERVER_T *state = calloc(1, sizeof(TCP_SERVER_T));
     if (!state) {
-        DEBUG_printf("failed to allocate state\n");
+        printf("failed to allocate state\n");
         return 1;
     }
 
@@ -206,38 +206,9 @@ int main() {
         sleep_ms(1000);
 #endif
     }
-    tcp_server_close(state);
-    dns_server_deinit(&dns_server);
     dhcp_server_deinit(&dhcp_server);
     cyw43_arch_deinit();
     printf("Test complete\n");
     return 0;
-//
-//    // Initialize stdio
-//    stdio_init_all();
-////
-////    char ui = 0;
-////    scanf(" %c",&ui);
-////    printf("RECEIVED STDIN [%c]\n",ui);
-//
-//    sleep_ms(10000);
-//    printf("HEY THERE MOTHERGUCKER!\n");
-//    // Connect to WiFi
-//    if (connectWifi(country, WIFI_SSID, WIFI_PASSWORD, auth)) {
-//      printf("Failed connection.\n") ;
-//    }
-//
-//    // Initialize semaphore
-//    sem_init(&new_message, 0, 1) ;
-//
-//    //============================
-//    // UDP recenve ISR routines
-//    udpecho_raw_init();
-//
-//    // Add threads, start scheduler
-//    pt_add_thread(protothread_send) ;
-//    pt_add_thread(protothread_receive) ;
-//    pt_schedule_start ;
 
-    return 0;
 }
