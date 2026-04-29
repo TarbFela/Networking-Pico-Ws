@@ -170,7 +170,7 @@ int main() {
     }
 
     if (cyw43_arch_init()) {
-        printf("failed to initialise\n");
+        printf("failed to initialize\n");
         return 1;
     }
 
