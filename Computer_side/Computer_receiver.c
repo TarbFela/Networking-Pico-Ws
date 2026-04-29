@@ -17,12 +17,29 @@
 // Protothreads
 #include "pt_cornell_rp2040_v1_4.h"
 
+#include "dhcpserver/dhcpserver.h"
 // Destination port and IP address
+typedef struct TCP_SERVER_T_ {
+    struct tcp_pcb *server_pcb;
+    bool complete;
+    ip_addr_t gw;
+} TCP_SERVER_T;
+
 #define UDP_PORT 1234
 #define BEACON_TARGET "172.20.10.2"
 
 // Maximum length of our message
 #define BEACON_MSG_LEN_MAX 127
+// --- Globals ---
+static ip_addr_t client_ip;
+static bool client_connected = false;
+volatile bool client_joined;   // signal when a client gets a DHCP lease
+semaphore_t new_message;
+char received_data[BEACON_MSG_LEN_MAX];
+
+static struct udp_pcb *udp_rx_pcb;
+
+static struct udp_pcb *udp_tx_pcb;
 
 // Protocol control block for UDP receive connection
 static struct udp_pcb *udp_rx_pcb;
@@ -53,7 +70,7 @@ static void udpecho_raw_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p,
 }
 
 // ===================================
-// Define the recv callback 
+// Define the recv callback
 void  udpecho_raw_init(void)
 {
 
@@ -78,90 +95,56 @@ void  udpecho_raw_init(void)
     printf("udp_rx_pcb error");
   }
 }
-
-static PT_THREAD (protothread_receive(struct pt *pt))
+static PT_THREAD(protothread_stream_send(struct pt *pt))
 {
-  // Begin thread
-  PT_BEGIN(pt) ;
+    PT_BEGIN(pt);
 
-  while(1) {
-    // Wait on a semaphore
-    PT_SEM_SDK_WAIT(pt, &new_message) ;
+        // Wait until DHCP has handed out a lease
+//        PT_SEM_SDK_WAIT(pt, &client_joined);
 
-    // Print received message
-    printf("%s\n", received_data);
+        udp_tx_pcb = udp_new();
 
-  }
+        int n = 0;
+        while (1) {
 
-  // End thread
-  PT_END(pt) ;
+            sleep_ms(1000);
+            n++;
+            struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, BEACON_MSG_LEN_MAX+1, PBUF_RAM);
+            char *req = (char *)p->payload;
+            memset(req, 0, BEACON_MSG_LEN_MAX+1);
+            snprintf(req, BEACON_MSG_LEN_MAX, "message number %d\n",n );
+
+            udp_sendto(udp_tx_pcb, p, &client_ip, UDP_PORT);
+            pbuf_free(p);
+        }
+
+    PT_END(pt);
 }
 
-static PT_THREAD (protothread_send(struct pt *pt))
+static PT_THREAD(protothread_stream_receive(struct pt *pt))
 {
-    // Begin thread
-    PT_BEGIN(pt) ;
+    PT_BEGIN(pt);
 
-    // Make a static local UDP protocol control block
-    static struct udp_pcb* pcb;
-    // Initialize that protocol control block
-    pcb = udp_new() ;
+        // Also wait — don't bind RX until we know we have a client
+//        PT_SEM_SDK_WAIT(pt, &client_joined);
 
-    // Create a static local IP_ADDR_T object
-    static ip_addr_t addr;
-    // Set the value of this IP address object to our destination IP address
-    ipaddr_aton(BEACON_TARGET, &addr);
+        udpecho_raw_init(); // bind RX pcb, register callback
 
-    while(1) {
-        // Prompt the user
-        sprintf(pt_serial_out_buffer, "> ");
-        serial_write ;
+        while (1) {
+            PT_SEM_SDK_WAIT(pt, &new_message);
+            printf("%s\n", received_data);
+        }
 
-        // Perform a non-blocking serial read for a string
-        serial_read ;
-
-        // Allocate a PBUF
-        struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, BEACON_MSG_LEN_MAX+1, PBUF_RAM);
-
-        // Pointer to the payload of the pbuf
-        char *req = (char *)p->payload;
-
-        // Clear the pbuf payload
-        memset(req, 0, BEACON_MSG_LEN_MAX+1);
-
-        // Fill the pbuf payload
-        snprintf(req, BEACON_MSG_LEN_MAX, "%s: %s \n",
-          ip4addr_ntoa(netif_ip_addr4(netif_default)), pt_serial_in_buffer);
-
-        // Send the UDP packet
-        err_t er = udp_sendto(pcb, p, &addr, UDP_PORT);
-
-        // Free the PBUF
-        pbuf_free(p);
-
-        // Check for errors
-        if (er != ERR_OK) {
-            printf("Failed to send UDP packet! error=%d", er);
-        } 
-    }
-    // End thread
-    PT_END(pt) ;
+    PT_END(pt);
 }
 
-#include "dhcpserver/dhcpserver.h"
-
-
-typedef struct TCP_SERVER_T_ {
-    struct tcp_pcb *server_pcb;
-    bool complete;
-    ip_addr_t gw;
-} TCP_SERVER_T;
 
 int main() {
     stdio_init_all();
 
     sleep_ms(10000);
     printf("Setting up!\n");
+    sem_init(&new_message, 0, 1);
 
     TCP_SERVER_T *state = calloc(1, sizeof(TCP_SERVER_T));
     if (!state) {
@@ -185,27 +168,20 @@ int main() {
 #undef IP
 
     // Start the dhcp server
-    dhcp_server_t dhcp_server;
+    volatile dhcp_server_t dhcp_server;
+    dhcp_server.client_ip_out = &client_ip;
+    dhcp_server.client_joined = &client_joined;
     dhcp_server_init(&dhcp_server, &state->gw, &mask);
 
-    state->complete = false;
-    while(!state->complete) {
-        // the following #ifdef is only here so this same example can be used in multiple modes;
-        // you do not need it in your code
-#if PICO_CYW43_ARCH_POLL
-        // if you are using pico_cyw43_arch_poll, then you must poll periodically from your
-        // main loop (not from a timer interrupt) to check for Wi-Fi driver or lwIP work that needs to be done.
-        cyw43_arch_poll();
-        // you can poll as often as you like, however if you have nothing else to do you can
-        // choose to sleep until either a specified time, or cyw43_arch_poll() has work to do:
-        cyw43_arch_wait_for_work_until(make_timeout_time_ms(1000));
-#else
-        // if you are not using pico_cyw43_arch_poll, then Wi-FI driver and lwIP work
-        // is done via interrupt in the background. This sleep is just an example of some (blocking)
-        // work you might be doing.
+    printf("Waiting for connection!\n");
+    while(*dhcp_server.client_joined != true) {
         sleep_ms(1000);
-#endif
     }
+    printf("New connection complete. Initializing PT threads...\n");
+    pt_add_thread(protothread_stream_send);
+    pt_add_thread(protothread_stream_receive);
+    pt_schedule_start;  // replaces the while(!complete) loop
+
     dhcp_server_deinit(&dhcp_server);
     cyw43_arch_deinit();
     printf("Test complete\n");
