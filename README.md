@@ -1,5 +1,7 @@
 # Networking Two Picos
 
+__This is for my Networking (ECE435) and Communications (ECE484) projects. The foci (plural?) of the two project reports are different enough and the development effort was sufficient enough that I feel this overlap is justifiable. This is meant, also, to integrate with my thesis project which is a piece of scientific instrumentation which needs to stream data and at present does so via USB.__
+
 There are two picos.
 One is on the ADPC. The other is on the computer.
 
