@@ -22,6 +22,10 @@
 // Protocol control block for UDP receive connection
 static struct udp_pcb *udp_rx_pcb;
 
+static struct udp_pcb *udp_tx_pcb;
+
+static ip_addr_t ap_addr;
+
 // Buffer in which to copy received messages
 char received_data[BEACON_MSG_LEN_MAX] ;
 
@@ -80,16 +84,24 @@ static PT_THREAD (protothread_receive(struct pt *pt))
   PT_BEGIN(pt) ;
 
   while(1) {
-    // Wait on a semaphore
-    PT_SEM_SDK_WAIT(pt, &new_message) ;
+    // Wait on a semaphor
+     PT_SEM_SDK_WAIT(pt, &new_message) ;
+
+//     printf("Attempting response!");
+      struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, BEACON_MSG_LEN_MAX + 1, PBUF_RAM);
+      char *req = (char *) p->payload;
+      memset(req, 0, BEACON_MSG_LEN_MAX + 1);
+      snprintf(req,10,"ACK\0");
+      udp_sendto(udp_tx_pcb, p, &ap_addr, UDP_PORT);
+      pbuf_free(p);
 
 
     // Print received message
     printf("Incoming data:\n");
-    for(int i = 0; i<BEACON_MSG_LEN_MAX; i++) {
+    for(int i = 0; i<16; i++) {
         printf("%02X ",received_data[i]);
     }
-    printf("\n");
+    printf(" [...] \n");
 
   }
 
@@ -102,8 +114,10 @@ static PT_THREAD (protothread_send(struct pt *pt))
     // Begin thread
     PT_BEGIN(pt) ;
 
+
     // Make a static local UDP protocol control block
     static struct udp_pcb* pcb;
+
     // Initialize that protocol control block
     pcb = udp_new() ;
 
@@ -168,8 +182,13 @@ int main() {
     // Initialize semaphore
     sem_init(&new_message, 0, 1) ;
 
+    ipaddr_aton("192.168.4.1",&ap_addr);
+
     //============================
     // UDP receive ISR routines
+
+    udp_tx_pcb = udp_new();
+
     udpecho_raw_init();
 
     // Add threads, start scheduler

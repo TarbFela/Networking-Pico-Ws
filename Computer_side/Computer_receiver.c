@@ -37,7 +37,10 @@ volatile uint16_t *data_addr = 0;
 char received_data[BEACON_MSG_LEN_MAX];
 
 volatile uint packets_counter = 0;
+volatile uint ack_counter = 0;
 volatile uint dma_counter = 0;
+volatile uint64_t trr_r = 0;
+volatile uint64_t trr_t = 0;
 
 static struct udp_pcb *udp_rx_pcb;
 
@@ -116,7 +119,7 @@ static PT_THREAD(protothread_stream_send(struct pt *pt))
         int n = 0;
         while (1) {
 
-            while(!data_ready) tight_loop_contents();
+            PT_YIELD_UNTIL(pt, data_ready);
             data_ready = false;
             // 256 samples --> 512 bytes --> 4x 127-byte messages (plus some loss...)
             for(int i = 0; i<((256*2)/BEACON_MSG_LEN_MAX); i++) {
@@ -125,14 +128,23 @@ static PT_THREAD(protothread_stream_send(struct pt *pt))
                 memset(req, 0, BEACON_MSG_LEN_MAX + 1);
                 memcpy(req, (char *) data_addr + (i*BEACON_MSG_LEN_MAX), BEACON_MSG_LEN_MAX);
                 udp_sendto(udp_tx_pcb, p, &client_ip, UDP_PORT);
+                trr_t = time_us_64();
                 pbuf_free(p);
                 packets_counter++;
+
             }
             if(packets_counter%100 == 0) {
-                printf("\tSENT %d PACKETS. "
-                       "DMA %d CYCLES DONE. "
-                       "LOST %d CYCLES.\n",packets_counter,dma_counter,dma_counter*((256*2)/BEACON_MSG_LEN_MAX) - packets_counter);
-
+                printf("\t,SENT, %d, "
+                       "ACK, %d, "
+                       "DMA, %d, "
+                       "DMA SKIPPAGE, %d, "
+                       "ACK SKIPPAGE, %d,"
+                       "\n",
+                       packets_counter,ack_counter, dma_counter,
+                       dma_counter*((256*2)/BEACON_MSG_LEN_MAX) - packets_counter,
+                       packets_counter-ack_counter
+                       );
+//                printf("TRR: %ld\n",(int32_t)(trr_r-trr_t));
             }
 
         }
@@ -151,7 +163,10 @@ static PT_THREAD(protothread_stream_receive(struct pt *pt))
 
         while (1) {
             PT_SEM_SDK_WAIT(pt, &new_message);
-            printf("%s\n", received_data);
+            trr_r = time_us_64();
+            printf("%ld,\n",(uint32_t)(trr_r-trr_t));
+            ack_counter++;
+            //printf("%s\n", received_data);
         }
 
     PT_END(pt);
