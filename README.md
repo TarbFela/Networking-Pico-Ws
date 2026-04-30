@@ -11,6 +11,16 @@ This will be a **PICO 2 W** because I have one.
 The other should **connect** to the ADPC Pico. This is the Computer Pico. 
 This will be a **PICO W** because I have one.
 
+## Building
+
+The project can be compiled by going into each directory (ADPC and Computer "side", resp.) and performing the typical RPi Pico build steps:
+
+```
+mkdir build
+cd build
+cmake -DPICO_BOARD=pico2_w ..
+```
+
 ## Connection
 
 Upon connection to the WAP, the Computer Pico should be assigned an IP address. 
